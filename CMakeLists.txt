@@ -70,13 +70,14 @@ set(cxx-sources
 	src/chromium/debug/stack_trace.cc
 	src/chromium/debug/stack_trace_win.cc
 	src/chromium/memory/singleton.cc
-#	src/chromium/metrics/histogram.cc
+	src/chromium/metrics/histogram.cc
 #	src/chromium/metrics/stats_counters.cc
 #	src/chromium/metrics/stats_table.cc
 	src/chromium/logging.cc
 	src/chromium/string_piece.cc
 	src/chromium/string_split.cc
 	src/chromium/string_util.cc
+	src/chromium/stringprintf.cc
 	src/chromium/synchronization/lock.cc
 	src/chromium/synchronization/lock_impl_win.cc
 	src/chromium/vlog.cc
