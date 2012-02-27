@@ -52,7 +52,7 @@ HANDLE log_file = NULL;
 // what should be prepended to each message?
 bool log_process_id = false;
 bool log_thread_id = false;
-bool log_timestamp = false;
+bool log_timestamp = true;
 bool log_tickcount = false;
 
 // A log message handler that gets notified of every log message we process.

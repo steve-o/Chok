@@ -59,7 +59,7 @@ set(CMAKE_CXX_FLAGS "/EHa")
 set(cxx-sources
 	src/chok.cc
 	src/config.cc
-#	src/consumer.cc
+	src/consumer.cc
 	src/error.cc
 #	src/http.cc
 	src/main.cc

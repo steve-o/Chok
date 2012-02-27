@@ -18,10 +18,11 @@
 #include <algorithm>
 #include <utility>
 
+#include <winsock2.h>
+
 #include "chromium/logging.hh"
 #include "error.hh"
 #include "rfaostream.hh"
-#include "session.hh"
 
 using rfa::common::RFA_String;
 
@@ -30,46 +31,167 @@ static const RFA_String kRdmFieldDictionaryName ("RWFFld");
 static const RFA_String kEnumTypeDictionaryName ("RWFEnum");
 
 chok::consumer_t::consumer_t (
-	const hilo::config_t& config,
-	std::shared_ptr<hilo::rfa_t> rfa,
+	const chok::config_t& config,
+	std::shared_ptr<chok::rfa_t> rfa,
 	std::shared_ptr<rfa::common::EventQueue> event_queue
 	) :
 	last_activity_ (boost::posix_time::microsec_clock::universal_time()),
 	config_ (config),
-	min_rwf_major_version_ (0),
-	min_rwf_minor_version_ (0)
+	rfa_ (rfa),
+	event_queue_ (event_queue),
+	error_item_handle_ (nullptr),
+	item_handle_ (nullptr),
+	rwf_major_version_ (0),
+	rwf_minor_version_ (0),
+	is_muted_ (true)
 {
 	ZeroMemory (cumulative_stats_, sizeof (cumulative_stats_));
 	ZeroMemory (snap_stats_, sizeof (snap_stats_));
-
-	sessions_.reserve (config.sessions.size());
-	unsigned i = 0;
-	for (auto it = config.sessions.begin();
-		it != config.sessions.end();
-		++it)
-	{
-		std::unique_ptr<session_t> session (new session_t (*this, i++, *it, rfa, event_queue));
-		sessions_.push_back (std::move (session));
-	}
 }
 
 chok::consumer_t::~consumer_t()
 {
+	VLOG(3) << "Unregistering RFA session clients.";
+	if (nullptr != item_handle_)
+		omm_consumer_->unregisterClient (item_handle_), item_handle_ = nullptr;
+	if (nullptr != error_item_handle_)
+		omm_consumer_->unregisterClient (error_item_handle_), error_item_handle_ = nullptr;
+	omm_consumer_.reset();
+	session_.reset();
 }
 
 bool
 chok::consumer_t::init()
 {
-	std::for_each (sessions_.begin(), sessions_.end(),
-		[](std::unique_ptr<session_t>& it)
-	{
-		it->init ();
-	});
+	last_activity_ = boost::posix_time::microsec_clock::universal_time();
+
+/* 7.2.1 Configuring the Session Layer Package.
+ */
+	VLOG(3) << "Acquiring RFA session.";
+	const RFA_String sessionName (config_.session_name.c_str(), 0, false);
+	session_.reset (rfa::sessionLayer::Session::acquire (sessionName));
+	if (!(bool)session_)
+		return false;
 
 /* 6.2.2.1 RFA Version Info.  The version is only available if an application
  * has acquired a Session (i.e., the Session Layer library is loaded).
  */
 	LOG(INFO) << "RFA: { productVersion: \"" << rfa::common::Context::getRFAVersionInfo()->getProductVersion() << "\" }";
+
+/* 7.5.6 Initializing an OMM Non-Interactive Provider. */
+	VLOG(3) << "Creating OMM consumer.";
+	const RFA_String consumerName (config_.consumer_name.c_str(), 0, false);
+	omm_consumer_.reset (session_->createOMMConsumer (consumerName, nullptr));
+	if (!(bool)omm_consumer_)
+		return false;
+
+/* 7.5.7 Registering for Events from an OMM Non-Interactive Provider. */
+/* receive error events (OMMCmdErrorEvent) related to calls to submit(). */
+	VLOG(3) << "Registering OMM error interest.";	
+	rfa::sessionLayer::OMMErrorIntSpec ommErrorIntSpec;
+	error_item_handle_ = omm_consumer_->registerClient (event_queue_.get(), &ommErrorIntSpec, *this, nullptr /* closure */);
+	if (nullptr == error_item_handle_)
+		return false;
+
+	return sendLoginRequest();
+}
+
+/* 7.3.5.3 Making a Login Request	
+ * A Login request message is encoded and sent by OMM Consumer and OMM non-
+ * interactive provider applications.
+ */
+bool
+chok::consumer_t::sendLoginRequest()
+{
+	VLOG(2) << "Sending login request.";
+	rfa::message::ReqMsg request;
+	request.setMsgModelType (rfa::rdm::MMT_LOGIN);
+	request.setInteractionType (rfa::message::ReqMsg::InitialImageFlag | rfa::message::ReqMsg::InterestAfterRefreshFlag);
+
+	rfa::message::AttribInfo attribInfo;
+	attribInfo.setNameType (rfa::rdm::USER_NAME);
+	const RFA_String userName (config_.user_name.c_str(), 0, false);
+	attribInfo.setName (userName);
+
+/* The request attributes ApplicationID and Position are encoded as an
+ * ElementList (5.3.4).
+ */
+	rfa::data::ElementList elementList;
+	rfa::data::ElementListWriteIterator it;
+	it.start (elementList);
+
+/* DACS Application Id.
+ * e.g. "256"
+ */
+	rfa::data::ElementEntry element;
+	element.setName (rfa::rdm::ENAME_APP_ID);
+	rfa::data::DataBuffer elementData;
+	const RFA_String applicationId (config_.application_id.c_str(), 0, false);
+	elementData.setFromString (applicationId, rfa::data::DataBuffer::StringAsciiEnum);
+	element.setData (elementData);
+	it.bind (element);
+
+/* DACS Position name.
+ * e.g. "localhost"
+ */
+	element.setName (rfa::rdm::ENAME_POSITION);
+	const RFA_String position (config_.position.c_str(), 0, false);
+	elementData.setFromString (position, rfa::data::DataBuffer::StringAsciiEnum);
+	element.setData (elementData);
+	it.bind (element);
+
+/* Instance Id (optional).
+ * e.g. "<Instance Id>"
+ */
+	if (!config_.instance_id.empty())
+	{
+		element.setName (rfa::rdm::ENAME_INST_ID);
+		const RFA_String instanceId (config_.instance_id.c_str(), 0, false);
+		elementData.setFromString (instanceId, rfa::data::DataBuffer::StringAsciiEnum);
+		element.setData (elementData);
+		it.bind (element);
+	}
+
+	it.complete();
+	attribInfo.setAttrib (elementList);
+	request.setAttribInfo (attribInfo);
+
+/* 4.2.8 Message Validation.  RFA provides an interface to verify that
+ * constructed messages of these types conform to the Reuters Domain
+ * Models as specified in RFA API 7 RDM Usage Guide.
+ */
+	RFA_String warningText;
+	const uint8_t validation_status = request.validateMsg (&warningText);
+	if (rfa::message::MsgValidationWarning == validation_status) {
+		LOG(WARNING) << "MMT_LOGIN::validateMsg: { warningText: \"" << warningText << "\" }";
+		cumulative_stats_[CONSUMER_PC_MMT_LOGIN_MALFORMED]++;
+	} else {
+		assert (rfa::message::MsgValidationOk == validation_status);
+		cumulative_stats_[CONSUMER_PC_MMT_LOGIN_VALIDATED]++;
+	}
+
+/* Not saving the returned handle as we will destroy the provider to logout,
+ * reference:
+ * 7.4.10.6 Other Cleanup
+ * Note: The application may call destroy() on an Event Source without having
+ * closed all Event Streams. RFA will internally unregister all open Event
+ * Streams in this case.
+ */
+	VLOG(3) << "Registering OMM item interest.";
+	rfa::sessionLayer::OMMItemIntSpec ommItemIntSpec;
+	ommItemIntSpec.setMsg (&request);
+	item_handle_ = omm_consumer_->registerClient (event_queue_.get(), &ommItemIntSpec, *this, nullptr /* closure */);
+	cumulative_stats_[CONSUMER_PC_MMT_LOGIN_SENT]++;
+	if (nullptr == item_handle_)
+		return false;
+
+/* Store negotiated Reuters Wire Format version information. */
+	rfa::data::Map map;
+	map.setAssociatedMetaInfo (*item_handle_);
+	rwf_major_version_ = map.getMajorVersion();
+	rwf_minor_version_ = map.getMinorVersion();
+	LOG(INFO) << "RWF: { MajorVersion: " << (unsigned)rwf_major_version_
+		<< ", MinorVersion: " << (unsigned)rwf_minor_version_ << " }";
 	return true;
 }
 
@@ -77,24 +199,16 @@ chok::consumer_t::init()
  * the provider state on behalf of the application.
  */
 bool
-hilo::provider_t::createItemStream (
+chok::consumer_t::createItemStream (
 	const char* name,
 	std::shared_ptr<item_stream_t> item_stream
 	)
 {
 	VLOG(4) << "Creating item stream for RIC \"" << name << "\".";
 	item_stream->rfa_name.set (name, 0, true);
-	item_stream->token.resize (sessions_.size());
-	item_stream->token.shrink_to_fit();
-	unsigned i = 0;
-	std::for_each (sessions_.begin(), sessions_.end(),
-		[&name, &item_stream, &i](std::unique_ptr<session_t>& it)
-	{
-		assert ((bool)it);
-		assert (!item_stream->token.empty());
-		it->createItemStream (name, &item_stream->item_handle[i]);
-		++i;
-	});
+	if (!is_muted_) {
+	} else {
+	}
 	const std::string key (name);
 	auto status = directory_.emplace (std::make_pair (key, item_stream));
 	assert (true == status.second);
@@ -104,240 +218,166 @@ hilo::provider_t::createItemStream (
 	return true;
 }
 
-/* Send an Rfa message through the pre-created item stream.
- */
-
-bool
-hilo::provider_t::send (
-	item_stream_t& item_stream,
-	rfa::common::Msg& msg
-)
+void
+chok::consumer_t::processEvent (
+	const rfa::common::Event& event_
+	)
 {
-	unsigned i = 0;
-	std::for_each (sessions_.begin(), sessions_.end(),
-		[&item_stream, &msg, &i](std::unique_ptr<session_t>& it)
-	{
-		assert ((bool)it);
-		assert (!item_stream.token.empty());
-		it->send (msg, *item_stream.token[i], nullptr);
-		++i;
-	});
-	cumulative_stats_[PROVIDER_PC_MSGS_SENT]++;
-	last_activity_ = boost::posix_time::microsec_clock::universal_time();
-	return true;
+	VLOG(1) << event_;
+	cumulative_stats_[CONSUMER_PC_RFA_EVENTS_RECEIVED]++;
+	switch (event_.getType()) {
+	case rfa::sessionLayer::OMMItemEventEnum:
+		processOMMItemEvent (static_cast<const rfa::sessionLayer::OMMItemEvent&>(event_));
+		break;
+
+        case rfa::sessionLayer::OMMCmdErrorEventEnum:
+                processOMMCmdErrorEvent (static_cast<const rfa::sessionLayer::OMMCmdErrorEvent&>(event_));
+                break;
+
+        default:
+		cumulative_stats_[CONSUMER_PC_RFA_EVENTS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << event_;
+                break;
+        }
+}
+
+/* 7.5.8.1 Handling Item Events (Login Events).
+ */
+void
+chok::consumer_t::processOMMItemEvent (
+	const rfa::sessionLayer::OMMItemEvent&	item_event
+	)
+{
+	cumulative_stats_[CONSUMER_PC_OMM_ITEM_EVENTS_RECEIVED]++;
+	const rfa::common::Msg& msg = item_event.getMsg();
+
+/* Verify event is a response event */
+	if (rfa::message::RespMsgEnum != msg.getMsgType()) {
+		cumulative_stats_[CONSUMER_PC_OMM_ITEM_EVENTS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << msg;
+		return;
+	}
+
+	processRespMsg (static_cast<const rfa::message::RespMsg&>(msg));
 }
 
 void
-hilo::provider_t::getServiceDirectory (
-	rfa::data::Map& map
+chok::consumer_t::processRespMsg (
+	const rfa::message::RespMsg&	reply_msg
 	)
 {
-	rfa::data::MapWriteIterator it;
-	rfa::data::MapEntry mapEntry;
-	rfa::data::DataBuffer dataBuffer;
-	rfa::data::FilterList filterList;
-	const RFA_String serviceName (config_.service_name.c_str(), 0, false);
+	cumulative_stats_[CONSUMER_PC_RESPONSE_MSGS_RECEIVED]++;
+/* Verify event is a login response event */
+	if (rfa::rdm::MMT_LOGIN != reply_msg.getMsgModelType()) {
+		cumulative_stats_[CONSUMER_PC_RESPONSE_MSGS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << reply_msg;
+		return;
+	}
 
-	map.setAssociatedMetaInfo (min_rwf_major_version_, min_rwf_minor_version_);
-	it.start (map);
+	cumulative_stats_[CONSUMER_PC_MMT_LOGIN_RESPONSE_RECEIVED]++;
+	const rfa::common::RespStatus& respStatus = reply_msg.getRespStatus();
 
-/* No idea ... */
-	map.setKeyDataType (rfa::data::DataBuffer::StringAsciiEnum);
-/* One service. */
-	map.setTotalCountHint (1);
+/* save state */
+	stream_state_ = respStatus.getStreamState();
+	data_state_   = respStatus.getDataState();
 
-/* Service name -> service filter list */
-	mapEntry.setAction (rfa::data::MapEntry::Add);
-	dataBuffer.setFromString (serviceName, rfa::data::DataBuffer::StringAsciiEnum);
-	mapEntry.setKeyData (dataBuffer);
-	getServiceFilterList (filterList);
-	mapEntry.setData (static_cast<rfa::common::Data&>(filterList));
-	it.bind (mapEntry);
+	switch (stream_state_) {
+	case rfa::common::RespStatus::OpenEnum:
+		switch (data_state_) {
+		case rfa::common::RespStatus::OkEnum:
+			processLoginSuccess (reply_msg);
+			break;
 
-	it.complete();
-	last_activity_ = boost::posix_time::microsec_clock::universal_time();
+		case rfa::common::RespStatus::SuspectEnum:
+			processLoginSuspect (reply_msg);
+			break;
+
+		default:
+			cumulative_stats_[CONSUMER_PC_MMT_LOGIN_RESPONSE_DISCARDED]++;
+			LOG(WARNING) << "Uncaught: " << reply_msg;
+			break;
+		}
+		break;
+
+	case rfa::common::RespStatus::ClosedEnum:
+		processLoginClosed (reply_msg);
+		break;
+
+	default:
+		cumulative_stats_[CONSUMER_PC_MMT_LOGIN_RESPONSE_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << reply_msg;
+		break;
+	}
 }
 
+/* 7.5.8.1.1 Login Success.
+ * The stream state is OpenEnum one has received login permission from the
+ * back-end infrastructure and the non-interactive provider can start to
+ * publish data, including the service directory, dictionary, and other
+ * response messages of different message model types.
+ */
 void
-hilo::provider_t::getServiceFilterList (
-	rfa::data::FilterList& filterList
+chok::consumer_t::processLoginSuccess (
+	const rfa::message::RespMsg&			login_msg
 	)
 {
-	rfa::data::FilterListWriteIterator it;
-	rfa::data::FilterEntry filterEntry;
-	rfa::data::ElementList elementList;
+	cumulative_stats_[CONSUMER_PC_MMT_LOGIN_SUCCESS_RECEIVED]++;
+	try {
+		LOG(INFO) << "Unmuting consumer.";
+		is_muted_ = false;
 
-	filterList.setAssociatedMetaInfo (min_rwf_major_version_, min_rwf_minor_version_);
-	it.start (filterList);  
-
-/* SERVICE_INFO_ID and SERVICE_STATE_ID */
-	filterList.setTotalCountHint (2);
-
-/* SERVICE_INFO_ID */
-	filterEntry.setFilterId (rfa::rdm::SERVICE_INFO_ID);
-	filterEntry.setAction (rfa::data::FilterEntry::Set);
-	getServiceInformation (elementList);
-	filterEntry.setData (static_cast<const rfa::common::Data&>(elementList));
-	it.bind (filterEntry);
-
-/* SERVICE_STATE_ID */
-	filterEntry.setFilterId (rfa::rdm::SERVICE_STATE_ID);
-	filterEntry.setAction (rfa::data::FilterEntry::Set);
-	getServiceState (elementList);
-	filterEntry.setData (static_cast<const rfa::common::Data&>(elementList));
-	it.bind (filterEntry);
-
-	it.complete();
+/* ignore any error */
+	} catch (rfa::common::InvalidUsageException& e) {
+		LOG(ERROR) << "MMT_DIRECTORY::InvalidUsageException: { StatusText: \"" << e.getStatus().getStatusText() << "\" }";
+/* cannot publish until directory is sent. */
+		return;
+	}
 }
 
-/* SERVICE_INFO_ID
- * Information about a service that does not update very often.
+/* 7.5.8.1.2 Other Login States.
+ * All connections are down. The application should stop publishing; it may
+ * resume once the data state becomes OkEnum.
  */
 void
-hilo::provider_t::getServiceInformation (
-	rfa::data::ElementList& elementList
+chok::consumer_t::processLoginSuspect (
+	const rfa::message::RespMsg&			suspect_msg
 	)
 {
-	rfa::data::ElementListWriteIterator it;
-	rfa::data::ElementEntry element;
-	rfa::data::DataBuffer dataBuffer;
-	rfa::data::Array array_;
-	const RFA_String serviceName (config_.service_name.c_str(), 0, false);
-	const RFA_String vendorName (config_.vendor_name.c_str(), 0, false);
-
-	elementList.setAssociatedMetaInfo (min_rwf_major_version_, min_rwf_minor_version_);
-	it.start (elementList);
-
-/* Name<AsciiString>
- * Service name. This will match the concrete service name or the service group
- * name that is in the Map.Key.
- */
-	element.setName (rfa::rdm::ENAME_NAME);
-	dataBuffer.setFromString (serviceName, rfa::data::DataBuffer::StringAsciiEnum);
-	element.setData (dataBuffer);
-	it.bind (element);
-
-/* Vendor<AsciiString> (optional)
- * Vendor whom provides the data.
- */
-//	element.setName (rfa::rdm::ENAME_VENDOR);
-//	dataBuffer.setFromString (vendorName, rfa::data::DataBuffer::StringAsciiEnum);
-//	element.setData (dataBuffer);
-//	it.bind (element);
-	
-/* Capabilities<Array of UInt>
- * Array of valid MessageModelTypes that the service can provide. The UInt
- * MesageModelType is extensible, using values defined in the RDM Usage Guide
- * (1-255). Login and Service Directory are omitted from this list. This
- * element must be set correctly because RFA will only request an item from a
- * service if the MessageModelType of the request is listed in this element.
- */
-	element.setName (rfa::rdm::ENAME_CAPABILITIES);
-	getServiceCapabilities (array_);
-	element.setData (static_cast<const rfa::common::Data&>(array_));
-	it.bind (element);
-
-/* DictionariesUsed<Array of AsciiString>
- * List of Dictionary names that may be required to process all of the data 
- * from this service. Whether or not the dictionary is required depends on 
- * the needs of the consumer (e.g. display application, caching application)
- */
-	element.setName (rfa::rdm::ENAME_DICTIONARYS_USED);
-	getServiceDictionaries (array_);
-	element.setData (static_cast<const rfa::common::Data&>(array_));
-	it.bind (element);
-
-	it.complete();
+	cumulative_stats_[CONSUMER_PC_MMT_LOGIN_SUSPECT_RECEIVED]++;
+	is_muted_ = true;
 }
 
-/* Array of valid MessageModelTypes that the service can provide.
- * rfa::data::Array does not require version tagging according to examples.
+/* 7.5.8.1.2 Other Login States.
+ * The login failed, and the provider application failed to get permission
+ * from the back-end infrastructure. In this case, the provider application
+ * cannot start to publish data.
  */
 void
-hilo::provider_t::getServiceCapabilities (
-	rfa::data::Array& capabilities
+chok::consumer_t::processLoginClosed (
+	const rfa::message::RespMsg&			logout_msg
 	)
 {
-	rfa::data::ArrayWriteIterator it;
-	rfa::data::ArrayEntry arrayEntry;
-	rfa::data::DataBuffer dataBuffer;
-
-	it.start (capabilities);
-
-/* MarketPrice = 6 */
-	dataBuffer.setUInt32 (rfa::rdm::MMT_MARKET_PRICE);
-	arrayEntry.setData (dataBuffer);
-	it.bind (arrayEntry);
-
-	it.complete();
+	cumulative_stats_[CONSUMER_PC_MMT_LOGIN_CLOSED_RECEIVED]++;
+	is_muted_ = true;
 }
 
-void
-hilo::provider_t::getServiceDictionaries (
-	rfa::data::Array& dictionaries
-	)
-{
-	rfa::data::ArrayWriteIterator it;
-	rfa::data::ArrayEntry arrayEntry;
-	rfa::data::DataBuffer dataBuffer;
-
-	it.start (dictionaries);
-
-/* RDM Field Dictionary */
-	dataBuffer.setFromString (kRdmFieldDictionaryName, rfa::data::DataBuffer::StringAsciiEnum);
-	arrayEntry.setData (dataBuffer);
-	it.bind (arrayEntry);
-
-/* Enumerated Type Dictionary */
-	dataBuffer.setFromString (kEnumTypeDictionaryName, rfa::data::DataBuffer::StringAsciiEnum);
-	arrayEntry.setData (dataBuffer);
-	it.bind (arrayEntry);
-
-	it.complete();
-}
-
-/* SERVICE_STATE_ID
- * State of a service.
+/* 7.5.8.2 Handling CmdError Events.
+ * Represents an error Event that is generated during the submit() call on the
+ * OMM non-interactive provider. This Event gives the provider application
+ * access to the Cmd, CmdID, closure and OMMErrorStatus for the Cmd that
+ * failed.
  */
 void
-hilo::provider_t::getServiceState (
-	rfa::data::ElementList& elementList
+chok::consumer_t::processOMMCmdErrorEvent (
+	const rfa::sessionLayer::OMMCmdErrorEvent& error
 	)
 {
-	rfa::data::ElementListWriteIterator it;
-	rfa::data::ElementEntry element;
-	rfa::data::DataBuffer dataBuffer;
-
-	elementList.setAssociatedMetaInfo (min_rwf_major_version_, min_rwf_minor_version_);
-	it.start (elementList);
-
-/* ServiceState<UInt>
- * 1: Up/Yes
- * 0: Down/No
- * Is the original provider of the data responding to new requests. All
- * existing streams are left unchanged.
- */
-	element.setName (rfa::rdm::ENAME_SVC_STATE);
-	dataBuffer.setUInt32 (1);
-	element.setData (dataBuffer);
-	it.bind (element);
-
-/* AcceptingRequests<UInt> (optional, interactive-only)
- * 1: Yes
- * 0: No
- * If the value is 0, then consuming applications should not send any new
- * requests to the service provider. (Reissues may still be sent.) If an RFA
- * application makes new requests to the service, they will be queued. All
- * existing streams are left unchanged.
- */
-#if 0
-	element.setName (rfa::rdm::ENAME_ACCEPTING_REQS);
-	dataBuffer.setUInt32 (1);
-	element.setData (dataBuffer);
-	it.bind (element);
-#endif
-
-	it.complete();
+	cumulative_stats_[CONSUMER_PC_OMM_CMD_ERRORS]++;
+	LOG(ERROR) << "OMMCmdErrorEvent: { "
+		"CmdId: " << error.getCmdID() <<
+		", State: " << error.getStatus().getState() <<
+		", StatusCode: " << error.getStatus().getStatusCode() <<
+		", StatusText: \"" << error.getStatus().getStatusText() << "\" }";
 }
 
 /* eof */

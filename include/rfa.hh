@@ -42,6 +42,7 @@
 #include <SessionLayer/ConnectionEvent.h>
 #include <SessionLayer/OMMCmdErrorEvent.h>
 #include <SessionLayer/OMMConnectionIntSpec.h>
+#include "SessionLayer/OMMConsumer.h"
 #include <SessionLayer/OMMErrorIntSpec.h>
 #include <SessionLayer/OMMProvider.h>
 #include <SessionLayer/Session.h>

@@ -65,7 +65,6 @@ chok::chok_t::run ()
 		if (!(bool)log_ || !log_->Register())
 			goto cleanup;
 
-#if 0
 /* RFA consumer. */
 		consumer_.reset (new consumer_t (config_, rfa_, event_queue_));
 		if (!(bool)consumer_ || !consumer_->init())
@@ -79,7 +78,6 @@ chok::chok_t::run ()
 		if (!consumer_->createItemStream (msft.c_str(), stream))
 			goto cleanup;
 		msft_stream_ = std::move (stream);
-#endif
 
 	} catch (rfa::common::InvalidUsageException& e) {
 		LOG(ERROR) << "InvalidUsageException: { "

@@ -26,7 +26,21 @@ namespace chok
 {
 /* Performance Counters */
 	enum {
-		CONSUMER_PC_NA,
+		CONSUMER_PC_RFA_EVENTS_RECEIVED,
+		CONSUMER_PC_RFA_EVENTS_DISCARDED,
+		CONSUMER_PC_OMM_ITEM_EVENTS_RECEIVED,
+		CONSUMER_PC_OMM_ITEM_EVENTS_DISCARDED,
+		CONSUMER_PC_RESPONSE_MSGS_RECEIVED,
+		CONSUMER_PC_RESPONSE_MSGS_DISCARDED,
+		CONSUMER_PC_MMT_LOGIN_RESPONSE_RECEIVED,
+		CONSUMER_PC_MMT_LOGIN_RESPONSE_DISCARDED,
+		CONSUMER_PC_MMT_LOGIN_SUCCESS_RECEIVED,
+		CONSUMER_PC_MMT_LOGIN_SUSPECT_RECEIVED,
+		CONSUMER_PC_MMT_LOGIN_CLOSED_RECEIVED,
+		CONSUMER_PC_OMM_CMD_ERRORS,
+		CONSUMER_PC_MMT_LOGIN_VALIDATED,
+		CONSUMER_PC_MMT_LOGIN_MALFORMED,
+		CONSUMER_PC_MMT_LOGIN_SENT,
 /* marker */
 		CONSUMER_PC_MAX
 	};
@@ -43,6 +57,7 @@ namespace chok
 	class session_t;
 
 	class consumer_t :
+		public rfa::common::Client,
 		boost::noncopyable
 	{
 	public:
@@ -53,26 +68,62 @@ namespace chok
 
 		bool createItemStream (const char* name, std::shared_ptr<item_stream_t> item_stream) throw (rfa::common::InvalidUsageException);
 
+/* RFA event callback. */
+		void processEvent (const rfa::common::Event& event);
+
 		uint8_t getRwfMajorVersion() {
-			return min_rwf_major_version_;
+			return rwf_major_version_;
 		}
 		uint8_t getRwfMinorVersion() {
-			return min_rwf_minor_version_;
+			return rwf_minor_version_;
 		}
 
 	private:
+		void processOMMItemEvent (const rfa::sessionLayer::OMMItemEvent& event);
+                void processRespMsg (const rfa::message::RespMsg& msg);
+                void processLoginResponse (const rfa::message::RespMsg& msg);
+                void processLoginSuccess (const rfa::message::RespMsg& msg);
+                void processLoginSuspect (const rfa::message::RespMsg& msg);
+                void processLoginClosed (const rfa::message::RespMsg& msg);
+		void processOMMCmdErrorEvent (const rfa::sessionLayer::OMMCmdErrorEvent& event);
+
+		bool sendLoginRequest() throw (rfa::common::InvalidUsageException);
+
 		const config_t& config_;
 
-/* Reuters Wire Format versions. */
-		uint8_t min_rwf_major_version_;
-		uint8_t min_rwf_minor_version_;
+/* RFA context. */
+		std::shared_ptr<rfa_t> rfa_;
 
-		std::vector<std::unique_ptr<session_t>> sessions_;
+/* RFA asynchronous event queue. */
+		std::shared_ptr<rfa::common::EventQueue> event_queue_;
+
+/* RFA session defines one or more connections for horizontal scaling. */
+		std::unique_ptr<rfa::sessionLayer::Session, internal::release_deleter> session_;
+
+/* RFA OMM consumer interface. */
+		std::unique_ptr<rfa::sessionLayer::OMMConsumer, internal::destroy_deleter> omm_consumer_;
+
+/* RFA Error Item event consumer */
+		rfa::common::Handle* error_item_handle_;
+/* RFA Item event consumer */
+		rfa::common::Handle* item_handle_;
+
+/* Reuters Wire Format versions. */
+		uint8_t rwf_major_version_;
+		uint8_t rwf_minor_version_;
+
+/* RFA will return a CmdError message if the provider application submits data
+ * before receiving a login success message.  Mute downstream publishing until
+ * permission is granted to submit data.
+ */
+		bool is_muted_;
+
+/* Last RespStatus details. */
+		int stream_state_;
+		int data_state_;
 
 /* Container of all item streams keyed by symbol name. */
 		std::unordered_map<std::string, std::weak_ptr<item_stream_t>> directory_;
-
-		friend session_t;
 
 /** Performance Counters **/
 		boost::posix_time::ptime last_activity_;
