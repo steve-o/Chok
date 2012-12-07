@@ -1,0 +1,442 @@
+----------------------------------------------------------------
+--
+-- Chok! MIB
+--
+----------------------------------------------------------------
+
+CHOK-MIB DEFINITIONS ::= BEGIN
+
+-- IMPORTS: Include definitions from other mibs here, which is always
+-- the first item in a MIB file.
+IMPORTS
+        enterprises, OBJECT-TYPE, Counter32, MODULE-IDENTITY
+                FROM SNMPv2-SMI;
+
+--
+-- A brief description and update information about this mib.
+--
+chokMIB MODULE-IDENTITY
+	LAST-UPDATED "201212040000Z"
+	ORGANIZATION
+		"Thomson Reuters"
+	CONTACT-INFO
+		"Steven McCoy
+		steven.mccoy@thomsonreuters.com
+		+1 646-223-8624
+		Thomson Reuters
+		3 Times Square
+		New York, NY 10036
+		USA"
+	DESCRIPTION
+		"The MIB module for Chok!"
+	REVISION "201212040000Z"
+	DESCRIPTION
+		"Version 1.0: Initial MIB."
+	::= { enterprises 67 }
+	
+
+-- Define typical mib nodes, like where the objects are going to lie.
+-- we'll prefix everything in this mib with chok
+chok OBJECT IDENTIFIER ::= { chokMIB 4 }
+chokApplication OBJECT IDENTIFIER ::= { chok 1 }
+
+chokNumberOfEntries OBJECT-TYPE
+	SYNTAX     Unsigned32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of Chok! application instances."
+	::= { chokApplication 1 }
+
+-- Performance Management Table
+
+chokPerformanceTable OBJECT-TYPE
+	SYNTAX SEQUENCE OF chokPerformanceEntry
+	MAX-ACCESS not-accessible
+        STATUS     current
+	DESCRIPTION
+		"The table holding per session instance performance information."
+	::= { chokApplication 2 }
+
+chokPerformanceEntry OBJECT-TYPE
+	SYNTAX     chokPerformanceEntry
+	MAX-ACCESS not-accessible
+	STATUS     current
+	DESCRIPTION
+		"Per client session instance performance information."
+	INDEX    { chokPerformanceApplicationId }
+	::= { chokPerformanceTable 1 }
+
+chokPerformanceEntry ::= SEQUENCE {
+	chokPerformanceApplicationId
+		OCTET STR,
+	chokLastActivity
+		Counter32,
+	chokRfaEventsReceived
+		Counter32,
+	chokRfaEventsDiscarded
+		Counter32,
+	chokOmmItemEventsReceived
+		Counter32,
+	chokOmmItemEventsDiscarded
+		Counter32,
+	chokResponseMsgsReceived
+		Counter32,
+	chokResponseMsgsDiscarded
+		Counter32,
+	chokMmtLoginResponseReceived
+		Counter32,
+	chokMmtLoginResponseDiscarded
+		Counter32,
+	chokMmtLoginSuccess
+		Counter32,
+	chokMmtLoginSuspect
+		Counter32,
+	chokMmtLoginClosed
+		Counter32,
+	chokOmmCommandErrors,
+		Counter32,
+	chokMmtLoginValidated
+		Counter32,
+	chokMmtLoginMalformed
+		Counter32,
+	chokMmtLoginException
+		Counter32,
+	chokMmtLoginSent
+		Counter32,
+	chokMmtMarketPriceReceived
+		Counter32,
+	chokMmtMarketPriceRequestValidated
+		Counter32
+	chokMmtMarketPriceRequestMalformed
+		Counter32
+	chokMmtMarketPriceRequestException
+		Counter32
+	chokMmtMarketPriceRequestSent
+		Counter32
+	}
+
+chokPerformanceApplicationId OBJECT-TYPE
+	SYNTAX     OCTET STRING (SIZE (1..255))
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Application identifier, per configuration."
+	::= { chokPerformanceEntry 1 }
+
+chokLastActivity OBJECT-TYPE
+	SYNTAX     Counter32
+	UNITS      "seconds"
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Last time activity was observed.  In seconds since the epoch, January 1, 1970."
+	::= { chokPerformanceEntry 2 }
+
+chokRfaEventsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of RFA events received for this client."
+	::= { chokPerformanceEntry 3 }
+
+chokRfaEventsDiscarded OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of RFA events discarded for this client."
+	::= { chokPerformanceEntry 4 }
+
+chokOmmItemEventsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of OMM Item events received for this client."
+	::= { chokPerformanceEntry 5 }
+
+chokOmmItemEventsDiscarded OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of OMM Item events discarded for this client."
+	::= { chokPerformanceEntry 6 }
+
+chokResponseMsgsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of Response messages received from this client."
+	::= { chokPerformanceEntry 7 }
+
+chokResponseMsgsDiscarded OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of Response messages discarded from this client."
+	::= { chokPerformanceEntry 8 }
+
+chokMmtLoginResponseReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN responses received from this client."
+	::= { chokPerformanceEntry 9 }
+
+chokMmtLoginResponseDiscarded OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN responses discarded from this client."
+	::= { chokPerformanceEntry 10 }
+
+chokMmtLoginSuccess OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN success responses from this client."
+	::= { chokPerformanceEntry 11 }
+
+chokMmtLoginSuspect OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN suspect responses from this client."
+	::= { chokPerformanceEntry 12 }
+
+chokMmtLoginClosed OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN closed responses rejected from this client."
+	::= { chokPerformanceEntry 13 }
+
+chokOmmCommandErrors OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of OMM command errors from this client."
+	::= { chokPerformanceEntry 14 }
+
+chokMmtLoginValidated OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN validated from this client."
+	::= { chokPerformanceEntry 15 }
+
+chokMmtLoginMalformed OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN malformed from this client."
+	::= { chokPerformanceEntry 16 }
+
+chokMmtLoginException OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN exceptions from this client."
+	::= { chokPerformanceEntry 17 }
+
+chokMmtLoginSent OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_LOGIN sent from this client."
+	::= { chokPerformanceEntry 18 }
+
+chokMmtMarketPriceReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_MARKET_PRICE responses received from this client."
+	::= { chokPerformanceEntry 19 }
+
+chokMmtMarketPriceRequestValidated OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_MARKET_PRICE requests validated from this client."
+	::= { chokPerformanceEntry 20 }
+
+chokMmtMarketPriceRequestMalformed OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_MARKET_PRICE requests malformed from this client."
+	::= { chokPerformanceEntry 21 }
+
+chokMmtMarketPriceRequestException OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_MARKET_PRICE exceptions from this client."
+	::= { chokPerformanceEntry 22 }
+
+chokMmtMarketPriceRequestSent OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of MMT_MARKET_PRICE requests sent from this client."
+	::= { chokPerformanceEntry 23 }
+
+-- Symbol Table
+
+chokSymbolTable OBJECT-TYPE
+	SYNTAX SEQUENCE OF chokSymbolEntry
+	MAX-ACCESS not-accessible
+        STATUS     current
+	DESCRIPTION
+		"The table holding per symbol performance information."
+	::= { chokApplication 3 }
+
+chokSymbolEntry OBJECT-TYPE
+	SYNTAX     chokSymbolEntry
+	MAX-ACCESS not-accessible
+	STATUS     current
+	DESCRIPTION
+		"Per symbol performance information."
+	INDEX    { chokSymbolApplicationId,
+		   chokServiceName,
+		   chokItemName }
+	::= { chokSymbolTable 1 }
+
+chokSymbolEntry ::= SEQUENCE {
+	chokSymbolApplicationId
+		OCTET STRING,
+	chokItemName
+		OCTET STRING,
+	chokServiceName
+		OCTET STRING,
+	chokItemsReceived
+		Counter32,
+	chokLastActivity
+		Counter32,
+	chokRefreshMsgsReceived
+		Counter32,
+	chokLastRefresh
+		Counter32,
+	chokStatusMsgsReceived
+		Counter32,
+	chokLastStatus
+		Counter32,
+	chokUpdateMsgsReceived
+		Counter32,
+	chokLastUpdate
+		Counter32
+	}
+
+chokSymbolApplicationId OBJECT-TYPE
+	SYNTAX     OCTET STRING (SIZE (1..255))
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Application identifier, per configuration."
+	::= { chokSymbolEntry 1 }
+
+chokItemName OBJECT-TYPE
+	SYNTAX     OCTET STRING (SIZE (1..255))
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Item name or Reuters Instrument Code (RIC)."
+	::= { chokSymbolEntry 2 }
+
+chokServiceName OBJECT-TYPE
+	SYNTAX     OCTET STRING (SIZE (1..255))
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"TREP-RT service name or data feed."
+	::= { chokSymbolEntry 3 }
+
+chokItemsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of item events received for this symbol."
+	::= { chokSymbolEntry 4 }
+
+chokLastActivity OBJECT-TYPE
+	SYNTAX     Counter32
+	UNITS      "seconds"
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Last time activity was observed.  In seconds since the epoch, January 1, 1970."
+	::= { chokSymbolEntry 5 }
+
+chokRefreshMsgsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of refresh item events received for this symbol."
+	::= { chokSymbolEntry 6 }
+
+chokLastRefresh OBJECT-TYPE
+	SYNTAX     Counter32
+	UNITS      "seconds"
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Last time refresh item event received.  In seconds since the epoch, January 1, 1970."
+	::= { chokSymbolEntry 7 }
+
+chokStatusMsgsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of status item events received for this symbol."
+	::= { chokSymbolEntry 8 }
+
+chokLastStatus OBJECT-TYPE
+	SYNTAX     Counter32
+	UNITS      "seconds"
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Last time status item event received.  In seconds since the epoch, January 1, 1970."
+	::= { chokSymbolEntry 9 }
+
+chokUpdateMsgsReceived OBJECT-TYPE
+	SYNTAX     Counter32
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Number of update item events received for this symbol."
+	::= { chokSymbolEntry 10 }
+
+chokLastUpdate OBJECT-TYPE
+	SYNTAX     Counter32
+	UNITS      "seconds"
+	MAX-ACCESS read-only
+	STATUS     current
+	DESCRIPTION
+		"Last time update item event received.  In seconds since the epoch, January 1, 1970."
+	::= { chokSymbolEntry 11 }
+
+END

@@ -6,12 +6,64 @@ cmake_minimum_required (VERSION 2.8)
 
 project (Chok)
 
-set(RFA_ROOT C:/rfa7.2.0.L1.win-shared.rrg)
-set(BOOST_ROOT C:/boost_1_48_0)
+# Net-SNMP SDK installed, tested 5.7.1.
+if (MSVC11)
+	set(NETSNMP_BUILD_COMPILER "vc110")
+elseif (MSVC10)
+	set(NETSNMP_BUILD_COMPILER "vc100")
+endif ()
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	set(NETSNMP_BUILD_TYPE "debug")
+else (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	set(NETSNMP_BUILD_TYPE "release")
+endif (CMAKE_BUILD_TYPE STREQUAL "Debug")
+set(NETSNMP_ROOT D:/net-snmp-5.7.1/stage/${NETSNMP_BUILD_COMPILER}/x64/${NETSNMP_BUILD_TYPE})
+set(NETSNMP_INCLUDE_DIRS ${NETSNMP_ROOT}/include)
+set(NETSNMP_LIBRARY_DIRS ${NETSNMP_ROOT}/lib)
+set(NETSNMP_LIBRARIES
+	netsnmp.lib
+	netsnmpagent.lib
+	netsnmpmibs.lib
+)
+
+# Thomson Reuters Robust Foundation API
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	set(RFA_BUILD_TYPE "Debug_MDd")
+else (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	set(RFA_BUILD_TYPE "Release_MD")
+endif (CMAKE_BUILD_TYPE STREQUAL "Debug")
+set(RFA_ROOT D:/rfa7.4.0.L1.win-shared.rrg)
+set(RFA_INCLUDE_DIRS
+	${RFA_ROOT}/Include
+	${RFA_ROOT}/Include/rwf
+)
+set(RFA_LIBRARY_DIRS ${RFA_ROOT}/Libs/WIN_64_VS100/${RFA_BUILD_TYPE})
+set(RFA_LIBRARY_DIR ${RFA_LIBRARY_DIRS})
+set(RFA_LIBRARIES
+        RFA7_Common100_x64.lib
+        RFA7_Config100_x64.lib
+        RFA7_Logger100_x64.lib
+        RFA7_Data100_x64.lib
+        RFA7_Connections100_x64.lib
+        RFA7_Connections_OMM100_x64.lib
+        RFA7_SessionLayer100_x64.lib
+)
+set(RFA_RUNTIME_LIBRARIES
+	${RFA_LIBRARY_DIR}/RFA7_Common100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_Config100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_Logger100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_Data100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_Connections100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_Connections_OMM100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_SessionLayer_OMM100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_SessionLayer100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_RSSL_Adapter100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_RSSL_Cons_Adapter100_x64.dll
+	${RFA_LIBRARY_DIR}/RFA7_RSSL_Prov_Adapter100_x64.dll
+)
+set(BOOST_ROOT D:/boost_1_51_0)
 set(BOOST_LIBRARYDIR ${BOOST_ROOT}/stage/lib)
-
 set(Boost_USE_STATIC_LIBS ON)
-
 find_package (Boost 1.44 COMPONENTS thread REQUIRED)
 
 #-----------------------------------------------------------------------------
@@ -46,34 +98,56 @@ set(LIBRARY_OUTPUT_PATH  ${CMAKE_BINARY_DIR}/lib)
 add_definitions(
 	-DWIN32
 	-DWIN32_LEAN_AND_MEAN
-# Windows Server 2008 (not-R2)
-	-D_WIN32_WINNT=0x0600
+# Windows Server 2008 R2
+	-D_WIN32_WINNT=0x0601
+# Net-SNMP Autoconf overrides
+	-DHAVE_STDINT_H
+	-DHAVE_SOCKLEN_T
+# RFA version
+        -DRFA_LIBRARY_VERSION="7.4.0."
+# production release
+#	-DOFFICIAL_BUILD
+#	-DENABLE_LEAK_TRACKER
 )
 
-# SEH Exceptions
-set(CMAKE_CXX_FLAGS "/EHa")
+# SEH Exceptions.
+string(REGEX REPLACE "/EHsc" "/EHa" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
+# Parallel make.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+
+# Optimization flags.
+# http://msdn.microsoft.com/en-us/magazine/cc301698.aspx
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
+set(CMAKE_MODULE_LINKER_FLAGS_RELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE} /LTCG")
+
+# Disable buffer security check.
+# http://msdn.microsoft.com/en-us/library/8dbf701c(v=vs.80).aspx
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GS-")
 
 #-----------------------------------------------------------------------------
 # source files
 
 set(cxx-sources
 	src/chok.cc
+	src/chokMIB.cc
 	src/config.cc
 	src/consumer.cc
 	src/error.cc
-#	src/http.cc
 	src/main.cc
 	src/rfa.cc
 	src/rfa_logging.cc
+	src/snmp_agent.cc
 	src/chromium/chromium_switches.cc
 	src/chromium/command_line.cc
 	src/chromium/debug/stack_trace.cc
 	src/chromium/debug/stack_trace_win.cc
 	src/chromium/memory/singleton.cc
 	src/chromium/metrics/histogram.cc
-#	src/chromium/metrics/stats_counters.cc
-#	src/chromium/metrics/stats_table.cc
 	src/chromium/logging.cc
+	src/chromium/logging_win.cc
 	src/chromium/string_piece.cc
 	src/chromium/string_split.cc
 	src/chromium/string_util.cc
@@ -81,6 +155,7 @@ set(cxx-sources
 	src/chromium/synchronization/lock.cc
 	src/chromium/synchronization/lock_impl_win.cc
 	src/chromium/vlog.cc
+	src/chromium/win/event_trace_provider.cc
 )
 
 set(rc-sources
@@ -89,13 +164,14 @@ set(rc-sources
 
 include_directories(
 	include
-	${RFA_ROOT}/Include
-	${RFA_ROOT}/Include/rwf
+	${NETSNMP_INCLUDE_DIRS}
+	${RFA_INCLUDE_DIRS}
 	${Boost_INCLUDE_DIRS}
 )
 
 link_directories(
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD
+	${NETSNMP_LIBRARY_DIRS}
+	${RFA_LIBRARY_DIRS}
 	${Boost_LIBRARY_DIRS}
 )
 
@@ -105,30 +181,18 @@ link_directories(
 add_executable(Chok ${cxx-sources} ${rc-sources})
 
 target_link_libraries(Chok
-	RFA7_Common100_x64.lib
-	RFA7_Config100_x64.lib
-	RFA7_Logger100_x64.lib
-	RFA7_Data100_x64.lib
-	RFA7_Connections100_x64.lib
-	RFA7_Connections_OMM100_x64.lib
-	RFA7_SessionLayer100_x64.lib
+	${NETSNMP_LIBRARIES}
+	${RFA_LIBRARIES}
 	${Boost_LIBRARIES}
 	ws2_32.lib
 	dbghelp.lib
 )
 
-set(rfa_runtime_libraries
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Common100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Config100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Logger100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Data100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Connections100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_Connections_OMM100_x64.dll
-	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD/RFA7_SessionLayer100_x64.dll
-)
+file(GLOB mibs "${CMAKE_CURRENT_SOURCE_DIR}/mibs/*.txt")
 
 install (TARGETS Chok DESTINATION bin)
-install (FILES ${rfa_runtime_libraries} DESTINATION bin)
+install (FILES ${RFA_RUNTIME_LIBRARIES} DESTINATION bin)
+install (FILES ${mibs} DESTINATION mibs)
 
 set (CPACK_SOURCE_IGNORE_FILES "*.lib")
 

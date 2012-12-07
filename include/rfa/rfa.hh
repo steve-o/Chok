@@ -11,7 +11,10 @@
 #include <Common/StandardPrincipalIdentity.h>
 #include <Common/TokenizedPrincipalIdentity.h>
 #include <Config/Config.h>
+#include <Config/ConfigBool.h>
 #include <Config/ConfigDatabase.h>
+#include <Config/ConfigLong.h>
+#include <Config/ConfigString.h>
 #include <Config/ConfigTree.h>
 #include <Config/StagingConfigDatabase.h>
 #include <Data/Array.h>
@@ -42,13 +45,21 @@
 #include <SessionLayer/ConnectionEvent.h>
 #include <SessionLayer/OMMCmdErrorEvent.h>
 #include <SessionLayer/OMMConnectionIntSpec.h>
-#include "SessionLayer/OMMConsumer.h"
+#include <SessionLayer/OMMConsumer.h>
 #include <SessionLayer/OMMErrorIntSpec.h>
 #include <SessionLayer/OMMProvider.h>
 #include <SessionLayer/Session.h>
 #include <SessionLayer/OMMItemCmd.h>
 #include <SessionLayer/OMMItemEvent.h>
 #include <SessionLayer/OMMItemIntSpec.h>
+#include <SessionLayer/OMMActiveClientSessionEvent.h>
+#include <SessionLayer/OMMInactiveClientSessionEvent.h>
+#include <SessionLayer/OMMClientSessionIntSpec.h>
+#include <SessionLayer/OMMClientSessionCmd.h>
+#include <SessionLayer/OMMClientSessionListenerIntSpec.h>
+#include <SessionLayer/OMMListenerConnectionIntSpec.h>
+#include <SessionLayer/OMMSolicitedItemCmd.h>
+#include <SessionLayer/OMMSolicitedItemEvent.h>
 
 #endif /* __RFA_MISSING_HH__ */
 

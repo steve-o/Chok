@@ -13,6 +13,7 @@
 #include "error.hh"
 #include "rfa_logging.hh"
 #include "rfaostream.hh"
+#include "snmp_agent.hh"
 
 /* RDM Usage Guide: Section 6.5: Enterprise Platform
  * For future compatibility, the DictionaryId should be set to 1 by providers.
@@ -27,83 +28,118 @@ static const int kFieldListId = 3;
 static const int kRdmRdnDisplayId = 2;		/* RDNDISPLAY */
 static const int kRdmTradePriceId = 6;		/* TRDPRC_1 */
 
-using rfa::common::RFA_String;
+std::list<chok::chok_t*> chok::chok_t::global_list_;
+boost::shared_mutex chok::chok_t::global_list_lock_;
 
 static std::weak_ptr<rfa::common::EventQueue> g_event_queue;
 
+
+using rfa::common::RFA_String;
+
 chok::chok_t::chok_t()
 {
+	boost::unique_lock<boost::shared_mutex> (global_list_lock_);
+	global_list_.push_back (this);
 }
 
 chok::chok_t::~chok_t()
 {
-	clear();
+/* Remove from list before clearing. */
+	boost::unique_lock<boost::shared_mutex> (global_list_lock_);
+	global_list_.remove (this);
+
+	Clear();
 	LOG(INFO) << "fin.";
 }
 
-int
-chok::chok_t::run ()
+bool
+chok::chok_t::Init ()
 {
 	LOG(INFO) << config_;
 
 	try {
 /* RFA context. */
 		rfa_.reset (new rfa_t (config_));
-		if (!(bool)rfa_ || !rfa_->init())
-			goto cleanup;
+		if (!(bool)rfa_ || !rfa_->Init())
+			return false;
 
 /* RFA asynchronous event queue. */
 		const RFA_String eventQueueName (config_.event_queue_name.c_str(), 0, false);
 		event_queue_.reset (rfa::common::EventQueue::create (eventQueueName), std::mem_fun (&rfa::common::EventQueue::destroy));
 		if (!(bool)event_queue_)
-			goto cleanup;
+			return false;
 /* Create weak pointer to handle application shutdown. */
 		g_event_queue = event_queue_;
 
 /* RFA logging. */
-		log_.reset (new logging::LogEventProvider (config_, event_queue_));
+		log_.reset (new logging::rfa::LogEventProvider (config_, event_queue_));
 		if (!(bool)log_ || !log_->Register())
-			goto cleanup;
-
+			return false;
 /* RFA consumer. */
 		consumer_.reset (new consumer_t (config_, rfa_, event_queue_));
-		if (!(bool)consumer_ || !consumer_->init())
-			goto cleanup;
+		if (!(bool)consumer_ || !consumer_->Init())
+			return false;
 
 /* Create state for subscribed RIC. */
-		static const std::string msft ("MSFT.O");
-		auto stream = std::make_shared<subscription_stream_t> ();
-		if (!(bool)stream)
-			goto cleanup;
-		if (!consumer_->createItemStream (msft.c_str(), stream))
-			goto cleanup;
-		msft_stream_ = std::move (stream);
+		for (auto it = config_.instruments.begin(); it != config_.instruments.end(); ++it) {
+			auto stream = std::make_shared<subscription_stream_t> ();
+			if (!(bool)stream)
+				return false;
+			if (!consumer_->CreateItemStream (it->c_str(), stream))
+				return false;
+			streams_.push_back (stream);
+			DLOG(INFO) << *it;
+		}
 
-	} catch (rfa::common::InvalidUsageException& e) {
+	} catch (const rfa::common::InvalidUsageException& e) {
 		LOG(ERROR) << "InvalidUsageException: { "
-			"Severity: \"" << severity_string (e.getSeverity()) << "\""
-			", Classification: \"" << classification_string (e.getClassification()) << "\""
-			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
-		goto cleanup;
-	} catch (rfa::common::InvalidConfigurationException& e) {
+			  "\"Severity\": \"" << internal::severity_string (e.getSeverity()) << "\""
+			", \"Classification\": \"" << internal::classification_string (e.getClassification()) << "\""
+			", \"StatusText\": \"" << e.getStatus().getStatusText() << "\" }";
+		return false;
+	} catch (const rfa::common::InvalidConfigurationException& e) {
 		LOG(ERROR) << "InvalidConfigurationException: { "
-			"Severity: \"" << severity_string (e.getSeverity()) << "\""
-			", Classification: \"" << classification_string (e.getClassification()) << "\""
-			", StatusText: \"" << e.getStatus().getStatusText() << "\""
-			", ParameterName: \"" << e.getParameterName() << "\""
-			", ParameterValue: \"" << e.getParameterValue() << "\" }";
-		goto cleanup;
+			  "\"Severity\": \"" << internal::severity_string (e.getSeverity()) << "\""
+			", \"Classification\": \"" << internal::classification_string (e.getClassification()) << "\""
+			", \"StatusText\": \"" << e.getStatus().getStatusText() << "\""
+			", \"ParameterName\": \"" << e.getParameterName() << "\""
+			", \"ParameterValue\": \"" << e.getParameterValue() << "\" }";
+		return false;
+	} catch (const std::exception& e) {
+		LOG(ERROR) << "Rfa::Exception: { "
+			"\"What\": \"" << e.what() << "\" }";
+		return false;
+	}
+
+	try {
+/* Spawn SNMP implant. */
+		if (config_.is_snmp_enabled) {
+			snmp_agent_.reset (new snmp_agent_t (*this));
+			if (!(bool)snmp_agent_)
+				return false;
+		}
+	} catch (const std::exception& e) {
+		LOG(ERROR) << "SnmpAgent::Exception: { "
+			"\"What\": \"" << e.what() << "\" }";
+		return false;
+	}
+	return true;
+}
+
+int
+chok::chok_t::Run()
+{
+	if (!Init()) {
+		LOG(INFO) << "Init failed, cleaning up.";
+		Clear();
+		return EXIT_FAILURE;
 	}
 
 	LOG(INFO) << "Init complete, entering main loop.";
-	mainLoop ();
-
+	MainLoop ();
 	LOG(INFO) << "Main loop terminated.";
+	Clear();
 	return EXIT_SUCCESS;
-cleanup:
-	LOG(INFO) << "Init failed, cleaning up.";
-	clear();
-	return EXIT_FAILURE;
 }
 
 /* On a shutdown event set a global flag and force the event queue
@@ -144,7 +180,7 @@ CtrlHandler (
 }
 
 void
-chok::chok_t::mainLoop()
+chok::chok_t::MainLoop()
 {
 /* Add shutdown handler. */
 	::SetConsoleCtrlHandler ((PHANDLER_ROUTINE)::CtrlHandler, TRUE);
@@ -156,13 +192,14 @@ chok::chok_t::mainLoop()
 }
 
 void
-chok::chok_t::clear()
+chok::chok_t::Clear()
 {
 /* Signal message pump thread to exit. */
 	if ((bool)event_queue_)
 		event_queue_->deactivate();
 
-	msft_stream_.reset();
+/* Purge subscription streams. */
+	streams_.clear();
 
 /* Release everything with an RFA dependency. */
 	assert (consumer_.use_count() <= 1);

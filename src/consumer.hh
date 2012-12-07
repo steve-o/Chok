@@ -3,20 +3,27 @@
 
 #ifndef __CONSUMER_HH__
 #define __CONSUMER_HH__
-
 #pragma once
 
 #include <cstdint>
-#include <unordered_map>
+
+/* Boost Chrono. */
+#include <boost/chrono.hpp>
 
 /* Boost Posix Time */
-#include "boost/date_time/posix_time/posix_time.hpp"
+#include <boost/date_time/posix_time/posix_time.hpp>
+
+/* Boost unordered map: bypass 2^19 limit in MSVC std::unordered_map */
+#include <boost/unordered_map.hpp>
 
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
+/* Boost threading. */
+#include <boost/thread.hpp>
+
 /* RFA 7.2 */
-#include <rfa.hh>
+#include <rfa/rfa.hh>
 
 #include "rfa.hh"
 #include "config.hh"
@@ -34,13 +41,19 @@ namespace chok
 		CONSUMER_PC_RESPONSE_MSGS_DISCARDED,
 		CONSUMER_PC_MMT_LOGIN_RESPONSE_RECEIVED,
 		CONSUMER_PC_MMT_LOGIN_RESPONSE_DISCARDED,
-		CONSUMER_PC_MMT_LOGIN_SUCCESS_RECEIVED,
-		CONSUMER_PC_MMT_LOGIN_SUSPECT_RECEIVED,
-		CONSUMER_PC_MMT_LOGIN_CLOSED_RECEIVED,
+		CONSUMER_PC_MMT_LOGIN_SUCCESS,
+		CONSUMER_PC_MMT_LOGIN_SUSPECT,
+		CONSUMER_PC_MMT_LOGIN_CLOSED,
 		CONSUMER_PC_OMM_CMD_ERRORS,
 		CONSUMER_PC_MMT_LOGIN_VALIDATED,
 		CONSUMER_PC_MMT_LOGIN_MALFORMED,
+		CONSUMER_PC_MMT_LOGIN_EXCEPTION,
 		CONSUMER_PC_MMT_LOGIN_SENT,
+		CONSUMER_PC_MMT_MARKET_PRICE_RECEIVED,
+		CONSUMER_PC_MMT_MARKET_PRICE_REQUEST_VALIDATED,
+		CONSUMER_PC_MMT_MARKET_PRICE_REQUEST_MALFORMED,
+		CONSUMER_PC_MMT_MARKET_PRICE_REQUEST_EXCEPTION,
+		CONSUMER_PC_MMT_MARKET_PRICE_REQUEST_SENT,
 /* marker */
 		CONSUMER_PC_MAX
 	};
@@ -48,10 +61,34 @@ namespace chok
 	class item_stream_t : boost::noncopyable
 	{
 	public:
+		item_stream_t()
+			: item_handle (nullptr),
+			  msg_count (0),
+			  last_activity (boost::posix_time::second_clock::universal_time()),
+			  refresh_received (0),
+			  status_received (0),
+			  update_received (0)
+		{
+		}
+
 /* Fixed name for this stream. */
-		rfa::common::RFA_String rfa_name;
+		rfa::common::RFA_String rfa_item_name;
+
+/* Service origin, e.g. IDN_RDF */
+		rfa::common::RFA_String rfa_service_name;
+
 /* Subscription handle which is valid from login success to login close. */
-		std::vector<rfa::common::Handle*> item_handle;
+		rfa::common::Handle* item_handle;
+
+/* Performance counters */
+		boost::posix_time::ptime last_activity;
+		boost::posix_time::ptime last_refresh;
+		boost::posix_time::ptime last_status;
+		boost::posix_time::ptime last_update;
+		uint32_t msg_count;		/* including unknown message types */
+		uint32_t refresh_received;
+		uint32_t status_received;
+		uint32_t update_received;
 	};
 
 	class session_t;
@@ -64,30 +101,33 @@ namespace chok
 		consumer_t (const config_t& config, std::shared_ptr<rfa_t> rfa, std::shared_ptr<rfa::common::EventQueue> event_queue);
 		~consumer_t();
 
-		bool init() throw (rfa::common::InvalidConfigurationException, rfa::common::InvalidUsageException);
+		bool Init() throw (rfa::common::InvalidConfigurationException, rfa::common::InvalidUsageException);
 
-		bool createItemStream (const char* name, std::shared_ptr<item_stream_t> item_stream) throw (rfa::common::InvalidUsageException);
+		bool CreateItemStream (const char* name, std::shared_ptr<item_stream_t> item_stream) throw (rfa::common::InvalidUsageException);
 
 /* RFA event callback. */
-		void processEvent (const rfa::common::Event& event);
+		void processEvent (const rfa::common::Event& event) override;
 
-		uint8_t getRwfMajorVersion() {
+		uint8_t GetRwfMajorVersion() const {
 			return rwf_major_version_;
 		}
-		uint8_t getRwfMinorVersion() {
+		uint8_t GetRwfMinorVersion() const {
 			return rwf_minor_version_;
 		}
 
 	private:
-		void processOMMItemEvent (const rfa::sessionLayer::OMMItemEvent& event);
-                void processRespMsg (const rfa::message::RespMsg& msg);
-                void processLoginResponse (const rfa::message::RespMsg& msg);
-                void processLoginSuccess (const rfa::message::RespMsg& msg);
-                void processLoginSuspect (const rfa::message::RespMsg& msg);
-                void processLoginClosed (const rfa::message::RespMsg& msg);
-		void processOMMCmdErrorEvent (const rfa::sessionLayer::OMMCmdErrorEvent& event);
+		void OnOMMItemEvent (const rfa::sessionLayer::OMMItemEvent& event);
+                void OnRespMsg (const rfa::message::RespMsg& msg, void* closure);
+                void OnLoginResponse (const rfa::message::RespMsg& msg);
+                void OnLoginSuccess (const rfa::message::RespMsg& msg);
+                void OnLoginSuspect (const rfa::message::RespMsg& msg);
+                void OnLoginClosed (const rfa::message::RespMsg& msg);
+                void OnMarketPrice (const rfa::message::RespMsg& msg, void* closure);
+		void OnOMMCmdErrorEvent (const rfa::sessionLayer::OMMCmdErrorEvent& event);
 
-		bool sendLoginRequest() throw (rfa::common::InvalidUsageException);
+		bool SendLoginRequest() throw (rfa::common::InvalidUsageException);
+		bool SendItemRequest (std::shared_ptr<item_stream_t> item_stream) throw (rfa::common::InvalidUsageException);
+		bool Resubscribe();
 
 		const config_t& config_;
 
@@ -123,7 +163,17 @@ namespace chok
 		int data_state_;
 
 /* Container of all item streams keyed by symbol name. */
-		std::unordered_map<std::string, std::weak_ptr<item_stream_t>> directory_;
+		boost::unordered_map<std::string, std::weak_ptr<item_stream_t>> directory_;
+		boost::shared_mutex directory_lock_;
+
+#ifdef CHOKMIB_H
+		friend Netsnmp_Next_Data_Point chokPerformanceTable_get_next_data_point;
+		friend Netsnmp_Node_Handler chokPerformanceTable_handler;
+
+		friend Netsnmp_First_Data_Point chokSymbolTable_get_first_data_point;
+		friend Netsnmp_Next_Data_Point chokSymbolTable_get_next_data_point;
+		friend Netsnmp_Node_Handler chokSymbolTable_handler;
+#endif /* CHOKMIB_H */
 
 /** Performance Counters **/
 		boost::posix_time::ptime last_activity_;

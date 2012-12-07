@@ -7,6 +7,9 @@ static const char* kDefaultAdsPort = "14002";
 
 chok::config_t::config_t() :
 /* default values */
+	is_snmp_enabled (true),
+	is_agentx_subagent (true),
+	agentx_socket ("tcp:nylabdev1:705"),
 	service_name ("IDN_RDF"),
 	rssl_default_port (kDefaultAdsPort),
 	application_id ("256"),
@@ -20,7 +23,10 @@ chok::config_t::config_t() :
 	consumer_name ("ConsumerName")
 {
 /* C++11 initializer lists not supported in MSVC2010 */
-	rssl_servers.push_back ("nylabads2");
+	rssl_servers.push_back ("nylabads1");
+
+	instruments.push_back ("MSFT.O");
+	instruments.push_back ("NKE");
 }
 
 /* eof */

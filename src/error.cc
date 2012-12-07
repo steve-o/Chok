@@ -4,10 +4,10 @@
 #include "error.hh"
 
 /* RFA 7.2 headers */
-#include <rfa.hh>
+#include <rfa/rfa.hh>
 
 const char*
-chok::severity_string (
+internal::severity_string (
 	const int severity_
 	)
 {
@@ -24,7 +24,7 @@ chok::severity_string (
 }
 
 const char*
-chok::classification_string (
+internal::classification_string (
 	const int classification_
 	)
 {
