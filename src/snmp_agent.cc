@@ -99,6 +99,7 @@ chok::snmp_agent_t::Run (void)
 						 NETSNMP_DS_AGENT_X_SOCKET,
 						 chok_.config_.agentx_socket.c_str());
 		}
+/* netsnmp_enable_subagent() */
 		::netsnmp_ds_set_boolean (NETSNMP_DS_APPLICATION_ID,
 					  NETSNMP_DS_AGENT_ROLE,
 					  TRUE);
@@ -108,6 +109,13 @@ chok::snmp_agent_t::Run (void)
 		LOG(INFO) << "Setting Net-SNMP filelog to \"" << chok_.config_.snmp_filelog << "\"";
 		::snmp_enable_filelog (chok_.config_.snmp_filelog.c_str(), 0);
 	}
+
+/* disable persistent state files */
+	::netsnmp_ds_set_boolean (NETSNMP_DS_LIBRARY_ID,
+				  NETSNMP_DS_LIB_DONT_PERSIST_STATE,
+				  TRUE);
+/* disable loading mibs */
+	setenv ("MIBS", "", 1);
 
 	LOG(INFO) << "Initialising SNMP agent.";
 	if (0 != ::init_agent (kSnmpApplicationName)) {

@@ -1,2 +1,5 @@
 syntax: regexp
 ^build/
+syntax: glob
+Thumbs.db
+src/version.aps

@@ -9,7 +9,7 @@ chok::config_t::config_t() :
 /* default values */
 	is_snmp_enabled (true),
 	is_agentx_subagent (true),
-	agentx_socket ("tcp:nylabdev1:705"),
+	agentx_socket ("tcp:705"),
 	service_name ("IDN_RDF"),
 	rssl_default_port (kDefaultAdsPort),
 	application_id ("256"),
@@ -23,10 +23,11 @@ chok::config_t::config_t() :
 	consumer_name ("ConsumerName")
 {
 /* C++11 initializer lists not supported in MSVC2010 */
-	rssl_servers.push_back ("nylabads1");
+	rssl_servers.push_back ("nylabads2");
 
 	instruments.push_back ("MSFT.O");
 	instruments.push_back ("NKE");
+	instruments.push_back ("TRI");
 }
 
 /* eof */
